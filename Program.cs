@@ -27,8 +27,8 @@ app.MapGet("/", async context =>
     if (injectError && !safeMode && buttonPressed && pressCount > 5)
         throw new Exception("Simulated error after 5 button clicks!");
 
-    string buttonColor = injectError ? "#22c55e" : "#22c55e";
-    string buttonHover = injectError ? "#15803d" : "#15803d";
+    string buttonColor = injectError ? "#16187c" : "#16187c";
+    string buttonHover = injectError ? "#582912" : "#582912";
 
     await context.Response.WriteAsync($@"
 <!DOCTYPE html>

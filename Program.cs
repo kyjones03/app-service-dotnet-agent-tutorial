@@ -8,6 +8,7 @@ var app = builder.Build();
 app.MapGet("/", async context =>
 {
     context.Response.ContentType = "text/html; charset=utf-8";
+    string siteName = Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME") ?? Environment.MachineName;
     bool injectError = Environment.GetEnvironmentVariable("INJECT_ERROR") == "1";
     bool safeMode = context.Request.Query.ContainsKey("safe");
     bool buttonPressed = context.Request.Query.ContainsKey("crash");
@@ -102,6 +103,7 @@ app.MapGet("/", async context =>
 </head>
 <body>
     <div class='container'>
+        <div style='font-size:0.95em;color:#64748b;margin-bottom:8px;'>Instance: <b>{siteName}</b></div>
         <div class='number' id='counter'>{pressCount}</div>
         <form method='GET' style='display:inline'>
             <input type='hidden' name='crash' value='1' />

@@ -5,31 +5,63 @@ using System;
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
-app.MapGet("/", async context =>
-{
-    context.Response.ContentType = "text/html; charset=utf-8";
-    string siteName = Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME") ?? Environment.MachineName;
-    bool injectError = Environment.GetEnvironmentVariable("INJECT_ERROR") == "1";
-    bool safeMode = context.Request.Query.ContainsKey("safe");
-    bool buttonPressed = context.Request.Query.ContainsKey("crash");
+string siteName = Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME") ?? Environment.MachineName;
+bool injectError = Environment.GetEnvironmentVariable("INJECT_ERROR") == "1";
 
+// API endpoint - returns JSON, no page navigation
+app.MapGet("/api/increment", (HttpContext context) =>
+{
     int pressCount = 0;
     if (context.Request.Cookies.TryGetValue("crashCount", out var cookieVal))
         int.TryParse(cookieVal, out pressCount);
 
+    bool safeMode = context.Request.Query.ContainsKey("safe");
+
     if (safeMode)
         pressCount = 0;
-
-    if (buttonPressed && !safeMode)
+    else
         pressCount++;
 
-    context.Response.Cookies.Append("crashCount", pressCount.ToString(), new CookieOptions { Expires = DateTimeOffset.Now.AddHours(1) });
+    context.Response.Cookies.Append("crashCount", pressCount.ToString(), new CookieOptions
+    {
+        Expires = DateTimeOffset.Now.AddHours(1),
+        Path = "/",
+        SameSite = SameSiteMode.Lax
+    });
 
-    if (injectError && !safeMode && buttonPressed && pressCount > 5)
+    if (injectError && !safeMode && pressCount > 5)
         throw new Exception("Simulated error after 5 button clicks!");
 
-    string buttonColor = injectError ? "#16187c" : "#16187c";
-    string buttonHover = injectError ? "#582912" : "#582912";
+    return Results.Json(new { count = pressCount, instance = siteName });
+});
+
+// API endpoint - reset counter
+app.MapGet("/api/reset", (HttpContext context) =>
+{
+    context.Response.Cookies.Append("crashCount", "0", new CookieOptions
+    {
+        Expires = DateTimeOffset.Now.AddHours(1),
+        Path = "/",
+        SameSite = SameSiteMode.Lax
+    });
+
+    return Results.Json(new { count = 0, instance = siteName });
+});
+
+// API endpoint - get current state without changing anything
+app.MapGet("/api/status", (HttpContext context) =>
+{
+    int pressCount = 0;
+    if (context.Request.Cookies.TryGetValue("crashCount", out var cookieVal))
+        int.TryParse(cookieVal, out pressCount);
+
+    return Results.Json(new { count = pressCount, instance = siteName });
+});
+
+// Main page - static HTML with JavaScript fetch calls
+app.MapGet("/", async context =>
+{
+    context.Response.ContentType = "text/html; charset=utf-8";
 
     await context.Response.WriteAsync($@"
 <!DOCTYPE html>
@@ -52,10 +84,22 @@ app.MapGet("/", async context =>
             display: inline-block;
             padding: 40px 36px 36px 36px;
         }}
+        .instance {{
+            font-size: 0.95em;
+            color: #64748b;
+            margin-bottom: 8px;
+        }}
+        .instance b {{
+            color: #334155;
+        }}
         .number {{
             font-size: 3.2em;
             color: #2563eb;
             margin-bottom: 18px;
+            transition: transform 0.15s;
+        }}
+        .number.bump {{
+            transform: scale(1.15);
         }}
         .note {{
             margin-top: 12px;
@@ -68,9 +112,9 @@ app.MapGet("/", async context =>
             font-weight: bold;
             font-size: 1.3em;
         }}
-        button {{
+        .btn-primary {{
             margin-top: 30px;
-            background: {buttonColor};
+            background: #16187c;
             color: #fff;
             border: none;
             border-radius: 6px;
@@ -79,14 +123,10 @@ app.MapGet("/", async context =>
             cursor: pointer;
             transition: background 0.2s;
         }}
-        button:disabled {{
-            opacity: 0.5;
-            cursor: not-allowed;
+        .btn-primary:hover {{
+            background: #582912;
         }}
-        button:hover:enabled {{
-            background: {buttonHover};
-        }}
-        .safe-btn {{
+        .btn-reset {{
             margin-top: 16px;
             background: #2563eb;
             color: #fff;
@@ -96,27 +136,99 @@ app.MapGet("/", async context =>
             padding: 8px 22px;
             cursor: pointer;
         }}
-        .safe-btn:hover {{
+        .btn-reset:hover {{
             background: #1e40af;
+        }}
+        .history {{
+            margin-top: 20px;
+            font-size: 0.85em;
+            color: #94a3b8;
+        }}
+        .history span {{
+            margin: 0 4px;
         }}
     </style>
 </head>
 <body>
     <div class='container'>
-        <div style='font-size:0.95em;color:#64748b;margin-bottom:8px;'>Instance: <b>{siteName}</b></div>
-        <div class='number' id='counter'>{pressCount}</div>
-        <form method='GET' style='display:inline'>
-            <input type='hidden' name='crash' value='1' />
-            <button id='incrementBtn' type='submit'>Increment</button>
-        </form>
-        <form method='GET' style='display:inline'>
-            <input type='hidden' name='safe' value='1' />
-            <button class='safe-btn' type='submit'>Reset Counter</button>
-        </form>
-        {(injectError ? $"<div class='note'>Button clicked <b>{pressCount}</b> times (error on 6th click).</div>" : "")}
-        {(injectError ? "<div class='warning'>ERROR INJECTION ENABLED: Simulated error will occur after 5 clicks.<br/>This is for troubleshooting demos.<br/>To stop the HTTP 500s, append \"?=safe=1\" to the URL.</div>" : "")}
+        <div class='instance'>Instance: <b id='instanceName'>{siteName}</b></div>
+        <div class='number' id='counter'>0</div>
+        <div>
+            <button class='btn-primary' id='incrementBtn' onclick='increment()'>Increment</button>
+        </div>
+        <div>
+            <button class='btn-reset' onclick='resetCounter()'>Reset Counter</button>
+        </div>
+        <div class='history' id='history'></div>
+        {(injectError ? "<div class='note' id='noteArea'>Error injection enabled — error triggers after 5 clicks.</div>" : "")}
+        {(injectError ? "<div class='warning'>ERROR INJECTION ENABLED: Simulated error will occur after 5 clicks.</div>" : "")}
         <div class='note'>Note: For the demo to work, set app setting <b>INJECT_ERROR=1</b> on the slot you want to simulate errors!</div>
     </div>
+
+    <script>
+        let instanceHistory = [];
+
+        // Load current state on page load
+        window.addEventListener('DOMContentLoaded', async () => {{
+            try {{
+                const resp = await fetch('/api/status', {{ credentials: 'same-origin' }});
+                const data = await resp.json();
+                document.getElementById('counter').textContent = data.count;
+                document.getElementById('instanceName').textContent = data.instance;
+                trackInstance(data.instance);
+            }} catch (e) {{
+                console.error('Failed to load status:', e);
+            }}
+        }});
+
+        async function increment() {{
+            try {{
+                const resp = await fetch('/api/increment', {{ credentials: 'same-origin' }});
+                const data = await resp.json();
+                document.getElementById('counter').textContent = data.count;
+                document.getElementById('instanceName').textContent = data.instance;
+                trackInstance(data.instance);
+
+                // Visual bump animation
+                const el = document.getElementById('counter');
+                el.classList.add('bump');
+                setTimeout(() => el.classList.remove('bump'), 150);
+            }} catch (e) {{
+                console.error('Error:', e);
+                document.getElementById('counter').textContent = 'Error!';
+            }}
+        }}
+
+        async function resetCounter() {{
+            try {{
+                const resp = await fetch('/api/reset', {{ credentials: 'same-origin' }});
+                const data = await resp.json();
+                document.getElementById('counter').textContent = data.count;
+                document.getElementById('instanceName').textContent = data.instance;
+                instanceHistory = [];
+                updateHistory();
+                trackInstance(data.instance);
+            }} catch (e) {{
+                console.error('Error:', e);
+            }}
+        }}
+
+        function trackInstance(name) {{
+            instanceHistory.push(name);
+            // Keep last 20 entries
+            if (instanceHistory.length > 20) instanceHistory.shift();
+            updateHistory();
+        }}
+
+        function updateHistory() {{
+            const el = document.getElementById('history');
+            if (instanceHistory.length < 2) {{
+                el.textContent = '';
+                return;
+            }}
+            el.innerHTML = 'Instance history: ' + instanceHistory.map(n => '<span>' + n + '</span>').join(' → ');
+        }}
+    </script>
 </body>
 </html>
     ");

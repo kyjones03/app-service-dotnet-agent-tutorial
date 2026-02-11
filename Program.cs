@@ -8,6 +8,14 @@ var app = builder.Build();
 string siteName = Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME") ?? Environment.MachineName;
 bool injectError = Environment.GetEnvironmentVariable("INJECT_ERROR") == "1";
 
+// CRITICAL: AFD session affinity requires Cache-Control: no-store
+// Without this header, AFD treats responses as cacheable and won't set the ASLBSA affinity cookie
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["Cache-Control"] = "no-store";
+    await next();
+});
+
 // API endpoint - returns JSON, no page navigation
 app.MapGet("/api/increment", (HttpContext context) =>
 {
